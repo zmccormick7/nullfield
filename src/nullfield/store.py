@@ -359,6 +359,31 @@ def superseded_by(entries: list[dict]) -> dict[str, list[str]]:
     return index
 
 
+def stale_evidence(entry: dict, entries: dict[str, dict], replaced: dict[str, list[str]]) -> list[dict]:
+    """Superseded entries this entry's evidence rests on, directly or through the entries it cites.
+
+    A replacement made by the citing entry, or by an entry on the citation path, already accounts
+    for the change. The search stops at a superseded entry: its own evidence no longer speaks.
+    """
+    found, seen = [], {entry["id"]}
+
+    def walk(record: dict, chain: list[str]) -> None:
+        for ref in record.get("evidence", []):
+            cited = ref[6:] if ref.startswith("entry:") else None
+            if cited is None or cited in seen or cited not in entries:
+                continue
+            seen.add(cited)
+            if cited in replaced:
+                newer = [r for r in replaced[cited] if r not in chain]
+                if newer:
+                    found.append({"entry": cited, "superseded_by": newer, "via": chain[1:]})
+            else:
+                walk(entries[cited], chain + [cited])
+
+    walk(entry, [entry["id"]])
+    return found
+
+
 def study_states(entries: list[dict]) -> dict[str, dict]:
     """Each study's current state: the latest unsuperseded decision that set one. Studies start open.
 
@@ -373,11 +398,12 @@ def study_states(entries: list[dict]) -> dict[str, dict]:
 
 
 def annotate(project: dict, collection: str, records: list[dict]) -> list[dict]:
-    """Attach derived status: superseded_by for entries, state for studies."""
+    """Attach derived status: superseded_by and stale_evidence for entries, state for studies."""
     entries = list_records(project, "entries")
     if collection == "entries":
-        index = superseded_by(entries)
-        return [{**r, "superseded_by": index.get(r["id"], [])} for r in records]
+        index, by_id = superseded_by(entries), {e["id"]: e for e in entries}
+        return [{**r, "superseded_by": index.get(r["id"], []), "stale_evidence": stale_evidence(r, by_id, index)}
+                for r in records]
     if collection == "studies":
         states = study_states(entries)
         return [{**r, **states.get(r["id"], {"state": "open", "decision": None}),
@@ -426,7 +452,13 @@ def context(store: Store, project: dict, session_id: str | None, limit: int = 10
     lines.extend(f"- {r['id']} [plan {r['plan_status']}] {r['title']} — {r['path']}" for r in open_studies)
     lines.extend(["", f"## Open questions (all {len(questions)})"])
     lines.extend(f"- {r['id']} {r['title']} — {r['path']}" for r in questions)
-    runs = annotate(project, "runs", list_records(project, "runs"))
+    stale = [r for r in entries if r["stale_evidence"] and not r["superseded_by"]]
+    lines.extend(["", f"## Entries citing superseded evidence (all {len(stale)})"])
+    for r in stale:
+        cited = "; ".join(f"{s['entry']} superseded by {', '.join(s['superseded_by'])}"
+                          + (f" (via {', '.join(s['via'])})" if s["via"] else "") for s in r["stale_evidence"])
+        lines.append(f"- {r['id']} [{r['kind']}] {r['title']} — cites {cited}")
+    runs =annotate(project, "runs", list_records(project, "runs"))
     for collection, records in (("studies", studies), ("entries", entries), ("runs", runs)):
         lines.extend(["", f"## Recent {collection} ({min(limit, len(records))} of {len(records)})"])
         for record in records[:limit]:
@@ -434,6 +466,8 @@ def context(store: Store, project: dict, session_id: str | None, limit: int = 10
             status = record.get("kind") or record.get("state") or record.get("status")
             if record.get("superseded_by"):
                 status += f"; superseded by {', '.join(record['superseded_by'])}"
+            elif record.get("stale_evidence"):
+                status += "; cites superseded evidence"
             lines.append(f"- {record['id']} [{status}] {label} — {record['path']}")
     lines.extend(["", "This is an index, not the complete evidence. Search related studies and entries,",
                   "including negative results, and open the underlying records before continuing."])

@@ -61,6 +61,10 @@ record is retained and reported as superseded. Supersession marks which entry
 is the current word, not which evidence was reused: cite still-valid earlier
 entries as evidence rather than superseding them. When retrieving findings,
 check `superseded_by` and read the replacement before relying on a result.
+Check `stale_evidence` too: a finding that cites a since-corrected entry, even
+through intermediate findings, may no longer hold. `context` lists every
+current entry in that state; revisit each and supersede it or record why the
+correction does not change it.
 
 ## A decision and continuation
 

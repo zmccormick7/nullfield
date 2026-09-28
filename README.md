@@ -38,7 +38,8 @@ agent still does the research. nullfield makes it remember, cite, and account fo
 - **Run provenance.** `run start` records the command, Git state, input and output
   fingerprints, and the plan version. `--detach` covers runs that take hours.
 - **Corrections that stick.** A new entry can supersede an old one. Search and context
-  then show the old result as superseded, and nothing is rewritten.
+  then show the old result as superseded, flag every entry whose evidence rests on it,
+  and nothing is rewritten.
 - **A research skill for your agent.** One command installs the workflow and methods
   guidance into Claude Code or Codex.
 
