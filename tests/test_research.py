@@ -327,6 +327,41 @@ class ResearchTests(unittest.TestCase):
         with self.assertRaises(ResearchError):
             add_entry(self.alpha, "observation", "Cross-project", "Body", None, [], [other["id"]])
 
+    def test_entries_citing_superseded_evidence_are_reported_through_the_citation_chain(self):
+        base = add_entry(self.alpha, "finding", "Spread is 1.2 bps", "Measured.", None, ["https://example.org/s"])
+        net = add_entry(self.alpha, "finding", "Net edge 2.1 bps", "Uses the spread.", None, [f"entry:{base['id']}"])
+        decision = add_entry(self.alpha, "decision", "Stop the signal", "Edge too small.", None, [f"entry:{net['id']}"])
+        unrelated = add_entry(self.alpha, "finding", "Turnover 40%", "Measured.", None, ["https://example.org/t"])
+        [clean] = annotate(self.alpha, "entries", [get_record(self.alpha, "entries", decision["id"])])
+        self.assertEqual(clean["stale_evidence"], [])
+
+        fix = add_entry(self.alpha, "finding", "Spread is 1.9 bps", "Corrected.", None,
+                        [f"entry:{base['id']}"], [base["id"]])
+        stale = {r["id"]: r["stale_evidence"] for r in annotate(self.alpha, "entries", list_records(self.alpha, "entries"))}
+        self.assertEqual(stale[net["id"]], [{"entry": base["id"], "superseded_by": [fix["id"]], "via": []}])
+        self.assertEqual(stale[decision["id"]], [{"entry": base["id"], "superseded_by": [fix["id"]], "via": [net["id"]]}])
+        self.assertEqual(stale[fix["id"]], [], "The correction cites what it replaces")
+        self.assertEqual(stale[unrelated["id"]], [])
+        text = context(self.store, self.alpha, None)
+        self.assertIn("## Entries citing superseded evidence (all 2)", text)
+        self.assertIn(f"- {decision['id']} [decision] Stop the signal — cites {base['id']} superseded by {fix['id']} "
+                      f"(via {net['id']})", text)
+        self.assertIn(f"[decision; cites superseded evidence] Stop the signal", text)
+
+        # Once the chain is corrected, only entries still resting on the old value are reported.
+        net_fix = add_entry(self.alpha, "finding", "Net edge 1.4 bps", "Recomputed.", None,
+                            [f"entry:{fix['id']}", f"entry:{net['id']}"], [net["id"]])
+        stale = {r["id"]: r["stale_evidence"] for r in annotate(self.alpha, "entries", list_records(self.alpha, "entries"))}
+        self.assertEqual(stale[net_fix["id"]], [])
+        self.assertEqual(stale[decision["id"]], [{"entry": net["id"], "superseded_by": [net_fix["id"]], "via": []}],
+                         "The search stops at a superseded entry")
+        text = context(self.store, self.alpha, None)
+        self.assertIn("## Entries citing superseded evidence (all 1)", text)
+        read = json.loads(self.cli("entry", "read", "--project", "alpha", decision["id"]).stdout)
+        self.assertEqual(read["stale_evidence"][0]["entry"], net["id"])
+        [found] = [r for r in search(self.alpha, "signal") if r["id"] == decision["id"]]
+        self.assertEqual(found["stale_evidence"][0]["superseded_by"], [net_fix["id"]])
+
     def test_study_state_is_set_by_decisions_and_open_work_is_listed(self):
         study = create_study(self.alpha, "Filter rules", "Plan")
         other = create_study(self.alpha, "Momentum filter", "Plan")

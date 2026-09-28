@@ -218,6 +218,13 @@ replaces a question. Nothing is rewritten; `read`, `list`, and `search` report
 `superseded_by` for entries and `state` for studies. `context` lists every open
 study and every unanswered question regardless of `--limit`.
 
+A correction also reaches the entries that relied on the old one. Each entry
+reports `stale_evidence`: the superseded entries its `entry:` evidence rests on,
+directly or through the entries it cites, with the replacements and the
+citation path (`via`). A replacement made by the citing entry, or by an entry
+on the path, already accounts for the change and is not reported. `context`
+lists every current entry citing superseded evidence regardless of `--limit`.
+
 Entry kinds: `observation`, `finding`, `decision`, `question`. Findings require
 at least one evidence reference: `run:UUID`, `entry:UUID`, a file, or an HTTP(S)
 URL. Run/entry IDs resolve within the selected project. External project evidence

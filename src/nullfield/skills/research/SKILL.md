@@ -205,7 +205,9 @@ Record a correction, reversal, or answer as a new entry with `--supersedes
 ENTRY_UUID`; the earlier entry stays unchanged and is reported as superseded in
 `read`, `list`, `search`, and `context`. Supersede only an entry the new one
 replaces as the current word; cite supporting entries with `--evidence`
-instead. Before relying on a retrieved entry, check `superseded_by`. Link to
+instead. Before relying on a retrieved entry, check `superseded_by`, and
+check `stale_evidence` for superseded entries its evidence rests on; revisit
+or supersede a conclusion whose evidence was corrected. Link to
 another project's evidence by file or URL and preserve its original scope;
 don't silently copy its conclusions into this project as established facts.
 
