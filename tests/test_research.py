@@ -362,6 +362,112 @@ class ResearchTests(unittest.TestCase):
         [found] = [r for r in search(self.alpha, "signal") if r["id"] == decision["id"]]
         self.assertEqual(found["stale_evidence"][0]["superseded_by"], [net_fix["id"]])
 
+    def commit(self, repo: Path, files: dict[str, str]) -> str:
+        if not (repo / ".git").exists():
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        for name, text in files.items():
+            (repo / name).write_text(text)
+        subprocess.run(["git", "-C", str(repo), "add", *files], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test", "-c", "user.email=test@example.org",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "change"], check=True)
+        return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, text=True,
+                              capture_output=True).stdout.strip()
+
+    def test_issues_question_matching_runs_and_everything_resting_on_them(self):
+        repo = self.root / "code"
+        repo.mkdir()
+        buggy = self.commit(repo, {"features.py": "window = 'includes current bar'\n"})
+        study = create_study(self.alpha, "Costs", "Plan")
+        write = "from pathlib import Path; Path('out').mkdir(exist_ok=True); Path('out/features.csv').write_text('z,1\\n')"
+        build = run_experiment(self.alpha, study["id"], [sys.executable, "-c", write], repo, 10, [], [],
+                               outputs=["out/features.csv"])
+        fixed = self.commit(repo, {"features.py": "window = 'previous bars only'\n"})
+        backtest = run_experiment(self.alpha, study["id"], [sys.executable, "-c", "pass"], repo, 10,
+                                  ["out/features.csv"], [])
+        clean = run_experiment(self.alpha, study["id"], [sys.executable, "-c", "pass"], repo, 10, [], [])
+        finding = add_entry(self.alpha, "finding", "Net edge 2.1 bps", "Holdout.", study["id"], [f"run:{backtest['id']}"])
+        decision = add_entry(self.alpha, "decision", "Stop the signal", "Too small.", study["id"],
+                             [f"entry:{finding['id']}"], [], "concluded")
+        other = add_entry(self.alpha, "finding", "Runtime is 3s", "Timing.", study["id"], [f"run:{clean['id']}"])
+
+        with self.assertRaisesRegex(ResearchError, "needs --affects"):
+            add_entry(self.alpha, "issue", "No selector", "Body", None, [])
+        with self.assertRaisesRegex(ResearchError, "Only an issue"):
+            add_entry(self.alpha, "finding", "Wrong kind", "Body", None, ["https://example.org"], affects=["sha:" + "a" * 12])
+        for bad in ("sha:abc", "commit:xyz1234", "path:/tmp/x", f"run:{uuid.uuid4()}"):
+            with self.assertRaises(ResearchError):
+                add_entry(self.alpha, "issue", "Bad selector", "Body", None, [], affects=[bad])
+        self.assertEqual(len(list_records(self.alpha, "entries")), 3, "Refused issues record nothing")
+
+        issue = add_entry(self.alpha, "issue", "features.py uses the current bar", "Look-ahead in the rolling window.",
+                          None, [f"run:{build['id']}"], affects=[f"commit:{buggy[:10].upper()}"])
+        self.assertEqual(issue["affects"], [f"commit:{buggy[:10]}"])
+        self.assertEqual(sorted(issue["questions"]["runs"]), sorted([build["id"], backtest["id"]]))
+        self.assertEqual(sorted(issue["questions"]["entries"]), sorted([finding["id"], decision["id"]]))
+        runs = {r["id"]: r["questioned_by"] for r in annotate(self.alpha, "runs", list_records(self.alpha, "runs"))}
+        self.assertEqual(runs[build["id"]], [{"issue": issue["id"], "via": [f"commit:{buggy[:10]}"]}])
+        self.assertEqual(runs[backtest["id"]], [{"issue": issue["id"], "via": [f"run:{build['id']}", f"commit:{buggy[:10]}"]}],
+                         "A run that read a questioned run's output is questioned through that lineage")
+        self.assertEqual(runs[clean["id"]], [])
+        entries = {r["id"]: r["questioned_by"] for r in annotate(self.alpha, "entries", list_records(self.alpha, "entries"))}
+        self.assertEqual(entries[decision["id"]][0]["via"],
+                         [f"entry:{finding['id']}", f"run:{backtest['id']}", f"run:{build['id']}", f"commit:{buggy[:10]}"])
+        self.assertEqual((entries[other["id"]], entries[issue["id"]]), ([], []), "An issue does not question itself")
+        [state] = annotate(self.alpha, "studies", [get_record(self.alpha, "studies", study["id"])])
+        self.assertEqual(state["questioned_entries"], 2)
+        text = context(self.store, self.alpha, None)
+        self.assertIn("## Open issues (all 1)", text)
+        self.assertIn(f"affects commit:{buggy[:10]}; questions 2 runs, 2 entries", text)
+        self.assertIn("## Entries resting on questioned evidence (all 2)", text)
+        self.assertIn(f"[decision; questioned by {issue['id']}] Stop the signal", text)
+        self.assertIn(f"[completed; questioned by {issue['id']}]", text)
+
+        # Building on questioned evidence is refused unless acknowledged; a correction may cite what it replaces.
+        with self.assertRaisesRegex(ResearchError, f"run:{backtest['id']}: issue {issue['id']}"):
+            add_entry(self.alpha, "finding", "Edge holds", "Body", None, [f"run:{backtest['id']}"])
+        add_entry(self.alpha, "observation", "Rerun needed", "Body", None, [f"run:{backtest['id']}"])
+        noted = add_entry(self.alpha, "finding", "Edge holds anyway", "Bug is outside the cost model.", None,
+                          [f"run:{backtest['id']}"], acknowledge_issues=True)
+        self.assertEqual(noted["acknowledged_issues"], [{"evidence": f"run:{backtest['id']}", "issues": [issue["id"]]}])
+        correction = add_entry(self.alpha, "finding", "Net edge 1.4 bps", "Rebuilt features.", study["id"],
+                               [f"entry:{finding['id']}", f"run:{clean['id']}"], [finding["id"]])
+        self.assertEqual(correction["acknowledged_issues"], [])
+        entries = {r["id"]: r for r in annotate(self.alpha, "entries", list_records(self.alpha, "entries"))}
+        self.assertEqual(entries[decision["id"]]["questioned_by"], [], "A superseded entry passes on staleness instead")
+        self.assertEqual(entries[decision["id"]]["stale_evidence"][0]["entry"], finding["id"])
+
+        # Superseding the issue resolves it everywhere.
+        resolved = add_entry(self.alpha, "observation", "Rebuilt all features", "Checked.", None, [], [issue["id"]])
+        self.assertNotIn(issue["id"], context(self.store, self.alpha, None).split("## Recent")[0])
+        self.assertTrue(all(not r["questioned_by"] for r in annotate(self.alpha, "runs", list_records(self.alpha, "runs"))))
+        self.assertEqual(resolved["supersedes"], [issue["id"]])
+        self.assertNotEqual(fixed, buggy)
+
+    def test_issue_selectors_by_file_digest_and_dirty_commit(self):
+        repo = self.root / "code"
+        repo.mkdir()
+        head = self.commit(repo, {"model.py": "cost = 1\n", "prices.csv": "p\n1\n"})
+        study = create_study(self.alpha, "Selectors", "Plan")
+        reads = run_experiment(self.alpha, study["id"], [sys.executable, "-c", "pass"], repo, 10, ["prices.csv"], [])
+        (repo / "model.py").write_text("cost = 2\n")
+        dirty = run_experiment(self.alpha, study["id"], [sys.executable, "-c", "pass"], repo, 10, [], [])
+        digest = reads["inputs"][0]["sha256"]
+        result = self.cli("entry", "add", "--project", "alpha", "--kind", "issue", "--title", "Stale prices",
+                          "--body", "Vendor file missed a split.", "--affects", f"sha:{digest[:12]}",
+                          "--affects", f"commit:{head[:7]}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        issue = json.loads(result.stdout)
+        self.assertEqual(issue["affects"], [f"sha:{digest[:12]}", f"commit:{head[:7]}"])
+        shown = json.loads(self.cli("run", "read", "--project", "alpha", dirty["id"]).stdout)
+        self.assertEqual(shown["questioned_by"], [{"issue": issue["id"], "via": [f"commit:{head[:7]}"], "dirty": True}])
+        [first] = annotate(self.alpha, "runs", [get_record(self.alpha, "runs", reads["id"])])
+        self.assertEqual(first["questioned_by"], [{"issue": issue["id"], "via": [f"sha:{digest[:12]}"]}],
+                         "One reason per issue: the first matching selector")
+        refused = self.cli("entry", "add", "--project", "alpha", "--kind", "finding", "--title", "T", "--body", "B",
+                           "--evidence", f"run:{reads['id']}")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("--acknowledge-issues", refused.stderr)
+
     def test_study_state_is_set_by_decisions_and_open_work_is_listed(self):
         study = create_study(self.alpha, "Filter rules", "Plan")
         other = create_study(self.alpha, "Momentum filter", "Plan")

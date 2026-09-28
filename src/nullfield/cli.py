@@ -13,7 +13,7 @@ from . import __version__
 from .experiments import run_experiment, stop_run, wait_run
 from .integration import install_skill
 from .ledger import PURPOSES, ROLES, define_sample, list_samples, record_use, show_sample
-from .store import (STUDY_STATES, ResearchError, Store, add_entry, annotate, context,
+from .store import (ENTRY_KINDS, STUDY_STATES, ResearchError, Store, add_entry, annotate, context,
                     create_study, freeze_study, get_record, list_records, search,
                     study_freezes)
 
@@ -115,7 +115,7 @@ def parser() -> argparse.ArgumentParser:
     entries = commands.add_parser("entry", help="Record findings, decisions, observations, and questions").add_subparsers(dest="action", required=True)
     entry = entries.add_parser("add")
     scope_flags(entry)
-    entry.add_argument("--kind", choices=("finding", "decision", "observation", "question"), required=True)
+    entry.add_argument("--kind", choices=ENTRY_KINDS, required=True)
     entry.add_argument("--title", required=True)
     text_flags(entry)
     entry.add_argument("--study")
@@ -124,6 +124,11 @@ def parser() -> argparse.ArgumentParser:
                        help="Repeatable entry ID this entry replaces as the current word: a correction, reversal, or answer")
     entry.add_argument("--study-state", choices=STUDY_STATES,
                        help="With --kind decision and --study: set the study's state")
+    entry.add_argument("--affects", action="append", default=[],
+                       help="Repeatable, required for --kind issue: run:ID, entry:ID, sha:HEX (a file's SHA-256 "
+                            "prefix), or commit:SHA. Matching records and those resting on them are questioned")
+    entry.add_argument("--acknowledge-issues", action="store_true",
+                       help="Record a finding even though open issues question its evidence")
     scope_flags(entries.add_parser("list"))
     read = entries.add_parser("read")
     scope_flags(read)
@@ -221,7 +226,7 @@ def dispatch(store: Store, args):
         return freeze_study(project, args.id, args.note)
     if args.command == "entry" and args.action == "add":
         return add_entry(project, args.kind, args.title, body(args), args.study, args.evidence,
-                         args.supersedes, args.study_state)
+                         args.supersedes, args.study_state, args.affects, args.acknowledge_issues)
     if args.command == "run" and args.action == "start":
         argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         return run_experiment(project, args.study, argv, args.cwd, args.timeout, args.input, store.resources(project),

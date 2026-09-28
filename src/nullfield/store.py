@@ -305,12 +305,22 @@ def freeze_study(project: dict, study_id: str, note: str) -> dict:
 
 
 STUDY_STATES = ("open", "concluded", "abandoned")
+ENTRY_KINDS = ("finding", "decision", "observation", "question", "issue")
 
 
 def add_entry(project: dict, kind: str, title: str, body: str, study_id: str | None, evidence: list[str],
-              supersedes: list[str] = (), study_state: str | None = None) -> dict:
+              supersedes: list[str] = (), study_state: str | None = None, affects: list[str] = (),
+              acknowledge_issues: bool = False) -> dict:
+    from .issues import parse_selector, questioned_evidence  # Issues build on this module's records.
+    if kind not in ENTRY_KINDS:
+        raise ResearchError(f"Entry kind must be one of: {', '.join(ENTRY_KINDS)}")
     if not title.strip() or not body.strip():
         raise ResearchError("An entry needs a title and a body.")
+    if kind == "issue" and not affects:
+        raise ResearchError("An issue needs --affects: run:ID, entry:ID, sha:HEX, or commit:SHA.")
+    if affects and kind != "issue":
+        raise ResearchError("Only an issue entry takes --affects.")
+    selectors = list(dict.fromkeys(parse_selector(project, value) for value in affects))
     if study_id:
         study_id = get_record(project, "studies", study_id)["id"]
     if study_state is not None:
@@ -341,13 +351,30 @@ def add_entry(project: dict, kind: str, title: str, body: str, study_id: str | N
             if not path.is_file():
                 raise ResearchError(f"Evidence file does not exist: {path}")
             resolved.append(str(path))
+    # A finding built on questioned evidence would read as current. A correction may cite what it replaces.
+    flagged = questioned_evidence(project, resolved, replaced) if kind == "finding" else []
+    if flagged and not acknowledge_issues:
+        raise ResearchError("Evidence for this finding is questioned by open issues:\n- "
+                            + "\n- ".join(f"{f['evidence']}: issue {', '.join(f['issues'])}" for f in flagged)
+                            + "\nNothing was recorded. Resolve the issue by superseding it, cite unaffected "
+                              "evidence, or rerun with --acknowledge-issues and state in the finding why the "
+                              "issue does not change it.")
     record = {"id": new_id(), "project_id": project["id"], "kind": kind, "title": title,
               "created_at": now(), "study_id": study_id, "evidence": resolved,
-              "supersedes": replaced, "study_state": study_state}
+              "supersedes": replaced, "study_state": study_state, "affects": selectors,
+              "acknowledged_issues": flagged}
     path = record_path(project, "entries", record["id"])
     atomic_text(path / "note.md", f"# {title}\n\n{body.strip()}\n")
     write_json(path / "record.json", record)
-    return {**record, "path": str(path)}
+    result = {**record, "path": str(path)}
+    if kind == "issue":
+        from .issues import questioned
+        entries = list_records(project, "entries")
+        by_run, by_entry = questioned(entries, list_records(project, "runs"), superseded_by(entries))
+        result["questions"] = {
+            "runs": [r for r, reasons in by_run.items() if any(x["issue"] == record["id"] for x in reasons)],
+            "entries": [e for e, reasons in by_entry.items() if any(x["issue"] == record["id"] for x in reasons)]}
+    return result
 
 
 def superseded_by(entries: list[dict]) -> dict[str, list[str]]:
@@ -398,21 +425,27 @@ def study_states(entries: list[dict]) -> dict[str, dict]:
 
 
 def annotate(project: dict, collection: str, records: list[dict]) -> list[dict]:
-    """Attach derived status: superseded_by and stale_evidence for entries, state for studies."""
+    """Attach derived status: supersession, stale evidence, and questioning issues for entries;
+    state for studies; liveness and questioning issues for runs."""
+    if collection not in ("entries", "studies", "runs"):
+        return records
+    from .issues import questioned  # Issues build on this module's records.
     entries = list_records(project, "entries")
+    index = superseded_by(entries)
+    by_run, by_entry = questioned(entries, list_records(project, "runs"), index)
     if collection == "entries":
-        index, by_id = superseded_by(entries), {e["id"]: e for e in entries}
-        return [{**r, "superseded_by": index.get(r["id"], []), "stale_evidence": stale_evidence(r, by_id, index)}
-                for r in records]
+        by_id = {e["id"]: e for e in entries}
+        return [{**r, "superseded_by": index.get(r["id"], []), "stale_evidence": stale_evidence(r, by_id, index),
+                 "questioned_by": by_entry.get(r["id"], [])} for r in records]
     if collection == "studies":
         states = study_states(entries)
         return [{**r, **states.get(r["id"], {"state": "open", "decision": None}),
-                 "plan_status": plan_status(project, r), "freezes": len(study_freezes(project, r["id"]))}
+                 "plan_status": plan_status(project, r), "freezes": len(study_freezes(project, r["id"])),
+                 "questioned_entries": sum(1 for e in entries if e.get("study_id") == r["id"]
+                                           and e["id"] in by_entry and e["id"] not in index)}
                 for r in records]
-    if collection == "runs":
-        from .experiments import run_state  # Liveness needs the runner's process helpers.
-        return [{**r, "state": run_state(r)} for r in records]
-    return records
+    from .experiments import run_state  # Liveness needs the runner's process helpers.
+    return [{**r, "state": run_state(r), "questioned_by": by_run.get(r["id"], [])} for r in records]
 
 
 def search(project: dict, query: str, limit: int = 20) -> list[dict]:
@@ -458,7 +491,19 @@ def context(store: Store, project: dict, session_id: str | None, limit: int = 10
         cited = "; ".join(f"{s['entry']} superseded by {', '.join(s['superseded_by'])}"
                           + (f" (via {', '.join(s['via'])})" if s["via"] else "") for s in r["stale_evidence"])
         lines.append(f"- {r['id']} [{r['kind']}] {r['title']} — cites {cited}")
-    runs =annotate(project, "runs", list_records(project, "runs"))
+    runs = annotate(project, "runs", list_records(project, "runs"))
+    issues = [r for r in entries if r["kind"] == "issue" and not r["superseded_by"]]
+    lines.extend(["", f"## Open issues (all {len(issues)})"])
+    for issue in issues:
+        hit_runs = sum(1 for r in runs if any(x["issue"] == issue["id"] for x in r["questioned_by"]))
+        hit_entries = sum(1 for e in entries if any(x["issue"] == issue["id"] for x in e["questioned_by"]))
+        lines.append(f"- {issue['id']} {issue['title']} — affects {', '.join(issue['affects'])}; "
+                     f"questions {hit_runs} runs, {hit_entries} entries — {issue['path']}")
+    shaky = [r for r in entries if r["questioned_by"] and not r["superseded_by"] and r["kind"] != "issue"]
+    lines.extend(["", f"## Entries resting on questioned evidence (all {len(shaky)})"])
+    for r in shaky:
+        why = "; ".join(f"{q['issue']} via {' → '.join(q['via'])}" for q in r["questioned_by"])
+        lines.append(f"- {r['id']} [{r['kind']}] {r['title']} — questioned by {why}")
     for collection, records in (("studies", studies), ("entries", entries), ("runs", runs)):
         lines.extend(["", f"## Recent {collection} ({min(limit, len(records))} of {len(records)})"])
         for record in records[:limit]:
@@ -468,6 +513,8 @@ def context(store: Store, project: dict, session_id: str | None, limit: int = 10
                 status += f"; superseded by {', '.join(record['superseded_by'])}"
             elif record.get("stale_evidence"):
                 status += "; cites superseded evidence"
+            if record.get("questioned_by") and not record.get("superseded_by"):
+                status += f"; questioned by {', '.join(dict.fromkeys(q['issue'] for q in record['questioned_by']))}"
             lines.append(f"- {record['id']} [{status}] {label} — {record['path']}")
     lines.extend(["", "This is an index, not the complete evidence. Search related studies and entries,",
                   "including negative results, and open the underlying records before continuing."])
