@@ -66,6 +66,13 @@ through intermediate findings, may no longer hold. `context` lists every
 current entry in that state; revisit each and supersede it or record why the
 correction does not change it.
 
+For a problem in code or data, record an `issue` naming the affected commits,
+file digests, runs, or entries before repairing it. Every run and entry
+resting on them is then reported as questioned (`questioned_by`), including
+runs that consumed a questioned run's outputs. Work through the affected
+findings: supersede each with a rerun result, or record why the problem does
+not reach it. Supersede the issue once that is done, saying what was checked.
+
 ## A decision and continuation
 
 Record whether to proceed, revise, reject, or defer, and why. A negative result

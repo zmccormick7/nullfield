@@ -195,7 +195,7 @@ nullfield entry add --session UUID --study STUDY_UUID --kind finding \
   --evidence run:RUN_UUID
 ```
 
-Entry kinds are `observation`, `finding`, `decision`, and `question`. Findings
+Entry kinds are `observation`, `finding`, `decision`, `question`, and `issue`. Findings
 require evidence references: `run:UUID`, `entry:UUID`, an existing file, or a URL.
 Evidence validation checks references, not whether they justify a claim.
 Represent inconclusive and negative results explicitly. State each finding's
@@ -210,6 +210,16 @@ check `stale_evidence` for superseded entries its evidence rests on; revisit
 or supersede a conclusion whose evidence was corrected. Link to
 another project's evidence by file or URL and preserve its original scope;
 don't silently copy its conclusions into this project as established facts.
+
+When you find a bug or a data problem, record an `issue` before fixing it:
+`nullfield entry add --session UUID --kind issue --title '...' --file /absolute/issue.md
+--affects commit:SHA` (or `sha:HEX` for a file's digest, `run:ID`, `entry:ID`;
+repeatable). The result lists the runs and entries it questions; use it to
+scope the problem and state it in the issue. Check `questioned_by` before
+relying on any run or entry. A finding citing questioned evidence is refused;
+pass `--acknowledge-issues` only when the finding explains why the issue does
+not change it. Resolve an issue by superseding it with what was checked or
+rerun, and supersede the affected findings with corrected ones.
 
 Finish a substantial investigation with a decision entry explaining what changed,
 what remains uncertain, and the next action or reason to stop. Pass

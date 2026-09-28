@@ -39,7 +39,8 @@ agent still does the research. nullfield makes it remember, cite, and account fo
   fingerprints, and the plan version. `--detach` covers runs that take hours.
 - **Corrections that stick.** A new entry can supersede an old one. Search and context
   then show the old result as superseded, flag every entry whose evidence rests on it,
-  and nothing is rewritten.
+  and nothing is rewritten. An `issue` names a bad commit, file, or run, and every run and
+  finding that depends on it is questioned until the issue is resolved.
 - **A research skill for your agent.** One command installs the workflow and methods
   guidance into Claude Code or Codex.
 
@@ -130,7 +131,7 @@ reset it.
 | **Study** | One bounded question with a Markdown plan. It's `open` until a decision concludes or abandons it. |
 | **Freeze** | A timestamped, hashed copy of the plan. The first freeze is the preregistration; later ones are amendments. |
 | **Run** | A recorded command: Git state, input and output fingerprints, the plan copy, logs, and status. |
-| **Entry** | A `finding`, `decision`, `observation`, or `question`. Findings must cite evidence, and any entry can supersede an earlier one. |
+| **Entry** | A `finding`, `decision`, `observation`, `question`, or `issue`. Findings must cite evidence, any entry can supersede an earlier one, and an issue questions the records it names and everything resting on them. |
 | **Sample / use** | A named slice of evaluation data, plus every recorded look at it and why. |
 
 A notebook is a directory of plain files that you can commit to a private Git repository.

@@ -225,7 +225,42 @@ citation path (`via`). A replacement made by the citing entry, or by an entry
 on the path, already accounts for the change and is not reported. `context`
 lists every current entry citing superseded evidence regardless of `--limit`.
 
-Entry kinds: `observation`, `finding`, `decision`, `question`. Findings require
+### Issues
+
+When a problem turns up in code or data, record it as an `issue` before fixing
+it, naming what it affects with `--affects` (repeatable):
+
+```bash
+nullfield entry add --session SESSION_UUID --kind issue \
+  --title 'Rolling z-score in features.py includes the current bar' --file issue.md \
+  --affects commit:4e1f2a0 --affects sha:3fa9c1d2e8b7 --evidence run:RUN_UUID
+```
+
+| Selector | Questions |
+| --- | --- |
+| `run:ID` | That run |
+| `entry:ID` | That entry, without replacing it |
+| `sha:HEX` | Runs that recorded a file with this SHA-256 prefix (12+ characters): an input, a declared output, or a changed binary file |
+| `commit:SHA` | Runs whose code snapshot, in the working directory or an attached repo, is at this commit (7+ characters). Runs with uncommitted tracked changes are marked `dirty`, since those edits may have caused or fixed the problem |
+
+An open issue also questions every run that read a questioned run's declared
+output (matched by SHA-256), and every entry whose `run:` or `entry:` evidence
+rests on a questioned record, however indirectly. `read`, `list`, and `search`
+report `questioned_by` on runs and entries: the issue and the path (`via`) from
+the record to what the issue selected. Studies report `questioned_entries`.
+Adding an issue returns the runs and entries it questions now. `context` lists
+every open issue with its reach, and every current entry resting on questioned
+evidence, regardless of `--limit`.
+
+A finding whose evidence is questioned is refused unless you pass
+`--acknowledge-issues`; the acknowledgement is stored with the finding, which
+stays questioned while the issue is open. A correction may cite the entries it
+supersedes. Resolve an issue by superseding it, for example with an
+observation stating what was checked or rerun; supersede it with a narrower
+issue when only part of the problem remains. Questioning a run never undoes
+its sample uses: data it saw stays seen.
+
+Entry kinds: `observation`, `finding`, `decision`, `question`, `issue`. Findings require
 at least one evidence reference: `run:UUID`, `entry:UUID`, a file, or an HTTP(S)
 URL. Run/entry IDs resolve within the selected project. External project evidence
 can be referenced by file or URL, retaining its original scope in the prose.
@@ -320,7 +355,7 @@ studies/<uuid>/
   plan.md                    Experiment plan (editable until frozen)
   freezes/<uuid>/            Frozen plan copies: preregistration and amendments
 entries/<uuid>/
-  record.json                Kind, study association, evidence references
+  record.json                Kind, study association, evidence, supersessions, issue selectors
   note.md                    Human-readable observations and interpretation
 runs/<uuid>/
   record.json                Command, provenance, status
