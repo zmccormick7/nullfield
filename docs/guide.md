@@ -18,7 +18,7 @@ nullfield is and why you would use it, start with the [README](../README.md).
 Clone the repository and install using Python 3.11 or newer (for example, Python 3.12):
 
 ```bash
-git clone https://github.com/Implied-Capital/nullfield.git
+git clone https://github.com/zmccormick7/nullfield.git
 cd nullfield
 python3.12 -m venv .venv
 source .venv/bin/activate

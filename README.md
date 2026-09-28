@@ -45,7 +45,7 @@ agent still does the research. nullfield makes it remember, cite, and account fo
 ## Install
 
 ```bash
-uv tool install git+https://github.com/Implied-Capital/nullfield   # or: pipx install git+...
+uv tool install git+https://github.com/zmccormick7/nullfield   # or: pipx install git+...
 nullfield skills install --agent claude                             # or: codex, both
 ```
 
@@ -174,7 +174,7 @@ guardrail and an audit trail, not a sandbox.
 ## Develop
 
 ```bash
-git clone https://github.com/Implied-Capital/nullfield && cd nullfield
+git clone https://github.com/zmccormick7/nullfield && cd nullfield
 python -m venv .venv && source .venv/bin/activate && pip install -e .
 python -m unittest discover -s tests
 python examples/demo.py      # disposable projects; touches no real data or registry

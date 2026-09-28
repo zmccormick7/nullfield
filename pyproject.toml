@@ -12,8 +12,8 @@ license = "MIT"
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/Implied-Capital/nullfield"
-Issues = "https://github.com/Implied-Capital/nullfield/issues"
+Repository = "https://github.com/zmccormick7/nullfield"
+Issues = "https://github.com/zmccormick7/nullfield/issues"
 
 [project.scripts]
 nullfield = "nullfield.cli:main"
